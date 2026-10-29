@@ -119,6 +119,17 @@ def load_model_and_tokenizer(args):
         load_kwargs["torch_dtype"] = compute
         load_kwargs["device_map"] = "auto"
 
+    # Compatibility shim: some transformers versions lack the "default" RoPE
+    # registry entry that LLaDA-MoE remote code expects.
+    try:
+        from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+        if "default" not in ROPE_INIT_FUNCTIONS:
+            from transformers.modeling_rope_utils import _compute_default_rope_parameters
+
+            ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters
+    except Exception:
+        pass
     model = AutoModel.from_pretrained(args.base_model, **load_kwargs)
     if args.load_in_4bit:
         model = model.to("cuda")
@@ -248,16 +259,33 @@ def run(args) -> None:
         print(f"[sft] adapter saved to {out_dir / 'adapter'}")
 
     def eval_sample():
+        # LLaDA-MoE does not support HF model.generate(); instead we report a
+        # holdout-style masked-loss estimate on fresh examples.
+        import torch.nn.functional as F
+
         try:
             model.eval()
-            ids = torch.tensor([tokenizer(args.eval_prompt, add_special_tokens=False).input_ids], device="cuda")
-            with torch.no_grad(), torch.autocast("cuda", dtype=compute):
-                out_ids = model.generate(input_ids=ids, max_new_tokens=64)
-            text = tokenizer.decode(out_ids[0], skip_special_tokens=True)
-            print(f"[sft] sample @ step {step}:\n{text[-300:]}\n")
+            losses = []
+            with torch.no_grad(), torch.autocast("cuda", dtype=compute, enabled=use_amp):
+                for _ in range(min(4, args.batch_size)):
+                    ex = next(it, None)
+                    if ex is None:
+                        break
+                    enc = encode_example(tokenizer, ex, args.max_seq_len)
+                    if enc is None:
+                        continue
+                    i, m = enc
+                    ids = i.unsqueeze(0).to("cuda")
+                    mask = m.unsqueeze(0).to("cuda")
+                    logits = model(input_ids=ids).logits
+                    flat = logits.view(-1, logits.size(-1))[mask.view(-1)]
+                    tgt = ids.view(-1)[mask.view(-1)]
+                    losses.append(F.cross_entropy(flat, tgt).item())
+            if losses:
+                print(f"[sft] holdout loss @ step {step}: {sum(losses) / len(losses):.4f}")
             model.train()
-        except Exception as e:  # generation is best-effort
-            print(f"[sft] (eval sample skipped: {e})")
+        except Exception as e:
+            print(f"[sft] (eval skipped: {e})")
             model.train()
 
     while step < args.steps:
