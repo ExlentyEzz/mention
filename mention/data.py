@@ -23,7 +23,6 @@ class StreamingLMCorpus(IterableDataset):
         ru_dataset: str = "mc4",
         ru_config: str = "ru",
         en_prob: float = 0.55,
-        trust_remote_code: bool = True,
     ):
         self.tokenizer = tokenizer
         self.seq_len = seq_len
@@ -31,12 +30,11 @@ class StreamingLMCorpus(IterableDataset):
         self.ru_dataset = ru_dataset
         self.ru_config = ru_config
         self.en_prob = en_prob
-        self.trust_remote_code = trust_remote_code
 
     def _make_stream(self, dataset: str, config: Optional[str]) -> Iterator[str]:
         from datasets import load_dataset
 
-        kwargs = dict(split="train", streaming=True, trust_remote_code=self.trust_remote_code)
+        kwargs = dict(split="train", streaming=True)
         if config:
             kwargs["name"] = config
         ds = load_dataset(dataset, **kwargs)  # type: ignore[call-overload]

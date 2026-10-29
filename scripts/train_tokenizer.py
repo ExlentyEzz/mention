@@ -32,7 +32,7 @@ from mention.tokenizer import (  # noqa: E402
 def stream_texts(dataset: str, config: str | None, limit: int):
     from datasets import load_dataset
 
-    kwargs = dict(split="train", streaming=True, trust_remote_code=True)
+    kwargs = dict(split="train", streaming=True)
     if config:
         kwargs["name"] = config
     ds = load_dataset(dataset, **kwargs)  # type: ignore[call-overload]
