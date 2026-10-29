@@ -62,8 +62,9 @@ kaggle_cells = [
         'os.environ["HF_TOKEN"] = secret.get_secret("HF_TOKEN")\n'
     ),
     code(
+        "%cd /kaggle/working\n"
         "# скачай код проекта (один раз на сессию)\n"
-        "!git clone --depth 1 https://github.com/ExlentyEzz/mention.git /kaggle/working/mention\n"
+        "!rm -rf /kaggle/working/mention && git clone --depth 1 https://github.com/ExlentyEzz/mention.git /kaggle/working/mention\n"
         "!test -f /kaggle/working/mention/requirements-kaggle.txt && echo CLONE_OK || echo CLONE_FAILED\n"
         "%cd /kaggle/working/mention\n"
     ),
@@ -84,7 +85,8 @@ colab_cells = [
         'os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")\n'
     ),
     code(
-        "!git clone --depth 1 https://github.com/ExlentyEzz/mention.git /content/mention\n"
+        "%cd /content\n"
+        "!rm -rf /content/mention && git clone --depth 1 https://github.com/ExlentyEzz/mention.git /content/mention\n"
         "!test -f /content/mention/requirements-kaggle.txt && echo CLONE_OK || echo CLONE_FAILED\n"
         "%cd /content/mention\n"
     ),
@@ -108,6 +110,7 @@ def _lane2_cells() -> list:
             'os.environ["HF_TOKEN_KAGGLE2"] = secret.get_secret("HF_TOKEN_KAGGLE2")\n'
         ),
         code(
+            "%cd /kaggle/working\n"
             "!rm -rf /kaggle/working/mention && git clone --depth 1 "
             "https://github.com/ExlentyEzz/mention.git /kaggle/working/mention\n"
             "!test -f /kaggle/working/mention/requirements-kaggle.txt && echo CLONE_OK "
