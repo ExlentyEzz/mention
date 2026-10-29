@@ -20,8 +20,8 @@ class StreamingLMCorpus(IterableDataset):
         tokenizer: Tokenizer,
         seq_len: int,
         en_dataset: str = "HuggingFaceFW/fineweb-edu",
-        ru_dataset: str = "mc4",
-        ru_config: str = "ru",
+        ru_dataset: str = "HuggingFaceFW/fineweb-2",
+        ru_config: str = "rus_Cyrl",
         en_prob: float = 0.55,
     ):
         self.tokenizer = tokenizer

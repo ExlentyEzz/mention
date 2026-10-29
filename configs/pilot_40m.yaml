@@ -14,8 +14,8 @@ model:
 
 data:
   en_dataset: "HuggingFaceFW/fineweb-edu"
-  ru_dataset: "mc4"
-  ru_config: "ru"
+  ru_dataset: "HuggingFaceFW/fineweb-2"
+  ru_config: "rus_Cyrl"
   en_prob: 0.55
   seq_len: 2048
   tokenizer_vocab: 32768

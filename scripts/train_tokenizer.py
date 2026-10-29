@@ -48,8 +48,8 @@ def main() -> None:
     p.add_argument("--out", default="artifacts/tokenizer")
     p.add_argument("--samples-per-source", type=int, default=200000)
     p.add_argument("--en-dataset", default="HuggingFaceFW/fineweb-edu")
-    p.add_argument("--ru-dataset", default="mc4")
-    p.add_argument("--ru-config", default="ru")
+    p.add_argument("--ru-dataset", default="HuggingFaceFW/fineweb-2")
+    p.add_argument("--ru-config", default="rus_Cyrl")
     p.add_argument("--min-frequency", type=int, default=2)
     args = p.parse_args()
 
