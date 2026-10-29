@@ -115,7 +115,7 @@ class CheckpointHub:
             return json.load(f)
 
     def _upload_multiple(self, files: Dict[str, str]) -> None:
-        """Upload {path_in_repo: local_path} in one commit (HF only)."""
+        """Upload {path_in_repo: local_path} (HF: one file per commit, with retries)."""
         if self.backend == "local":
             for path_in_repo, local_path in files.items():
                 dst = self.local_dir / path_in_repo
@@ -123,18 +123,13 @@ class CheckpointHub:
                 if Path(local_path).resolve() != dst.resolve():
                     shutil.copy(local_path, dst)
             return
-        from huggingface_hub import UploadOperation
-
-        ops = [
-            UploadOperation(path_or_fileobj=local_path, path_in_repo=path_in_repo)
-            for path_in_repo, local_path in files.items()
-        ]
-        _retry(
-            self._api.create_commit,  # type: ignore[union-attr]
-            self.repo_id,
-            operations=ops,
-            commit_message="mention: sync checkpoint",
-        )
+        for path_in_repo, local_path in files.items():
+            _retry(
+                self._api.upload_file,  # type: ignore[union-attr]
+                path_or_fileobj=local_path,
+                path_in_repo=path_in_repo,
+                repo_id=self.repo_id,
+            )
 
     def _write_json(self, filename: str, obj: Dict[str, Any]) -> None:
         tmp = self.local_dir / filename
