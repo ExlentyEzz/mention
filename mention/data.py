@@ -38,7 +38,12 @@ class StreamingLMCorpus(IterableDataset):
         if config:
             kwargs["name"] = config
         ds = load_dataset(dataset, **kwargs)  # type: ignore[call-overload]
-        for ex in ds:
+        # random start offset so different sessions/lanes don't replay
+        # the exact same leading documents
+        skip = random.randint(0, 50000)
+        import itertools
+
+        for ex in itertools.islice(ds, skip, None):
             text = ex.get("text")
             if isinstance(text, str) and text.strip():
                 yield text
@@ -46,20 +51,27 @@ class StreamingLMCorpus(IterableDataset):
     def __iter__(self) -> Iterator[List[int]]:
         en_it = self._make_stream(self.en_dataset, None)
         ru_it = self._make_stream(self.ru_dataset, self.ru_config)
+
+        def _next_text() -> str:
+            nonlocal en_it, ru_it
+            while True:
+                src = en_it if random.random() < self.en_prob else ru_it
+                try:
+                    return next(src)
+                except StopIteration:
+                    if src is en_it:
+                        en_it = self._make_stream(self.en_dataset, None)
+                    else:
+                        ru_it = self._make_stream(self.ru_dataset, self.ru_config)
+
+        # document buffer: sample randomly from it, refresh with random eviction
+        docbuf: List[str] = [_next_text() for _ in range(1024)]
         buf: List[int] = []
         while True:
-            if random.random() < self.en_prob:
-                try:
-                    text = next(en_it)
-                except StopIteration:
-                    en_it = self._make_stream(self.en_dataset, None)
-                    text = next(en_it)
-            else:
-                try:
-                    text = next(ru_it)
-                except StopIteration:
-                    ru_it = self._make_stream(self.ru_dataset, self.ru_config)
-                    text = next(ru_it)
+            idx = random.randrange(len(docbuf))
+            text = docbuf[idx]
+            if random.random() < 0.05:  # refresh 5% of docs each draw
+                docbuf[idx] = _next_text()
             ids = self.tokenizer.encode(text).ids  # type: ignore[union-attr]
             buf.extend(ids)
             while len(buf) >= self.seq_len:
