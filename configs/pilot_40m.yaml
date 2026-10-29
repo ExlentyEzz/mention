@@ -29,8 +29,8 @@ train:
   beta1: 0.9
   beta2: 0.95
   grad_clip: 1.0
-  micro_batch_size: 8           # per GPU per forward
-  grad_accum: 4                 # tokens per optimizer step = 8*4*2048 = 65k
+  micro_batch_size: 4           # per GPU per forward (OOM-safe on T4)
+  grad_accum: 8                 # tokens per optimizer step = 4*8*2048 = 65k
   fp16: true                    # T4/P100 have no bf16
   origin_prob: 0.015            # share of full-length (unmasked) examples
   log_every_steps: 20

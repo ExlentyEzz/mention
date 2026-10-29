@@ -309,7 +309,8 @@ def run_pretrain(
                 origin = torch.rand(B, device=ids.device) < cfg.origin_prob
                 mask[origin] = False
                 masked = mask.any()
-                logits = model(ids)
+                with accelerator.autocast():
+                    logits = model(ids)
                 losses = []
                 if masked:
                     flat_logits = logits.view(-1, logits.size(-1))[mask.view(-1)]
