@@ -164,20 +164,19 @@ class CheckpointHub:
         meta = self._read_json(META_FILENAME)
         if meta is None:
             return None
-        try:
-            if self.backend == "hf":
-                _retry(  # type: ignore[union-attr]
-                    self._api.hf_hub_download,
-                    self.repo_id,
-                    MODEL_FILENAME,
-                    local_dir=str(workdir),
-                    token=self.token,
-                )
-            else:
-                shutil.copy(self.local_dir / MODEL_FILENAME, workdir / MODEL_FILENAME)
-        except FileNotFoundError:
+        if not self._exists(MODEL_FILENAME):
             print("[sync] model weights missing in hub; returning no checkpoint")
             return None
+        if self.backend == "hf":
+            _retry(  # type: ignore[union-attr]
+                self._api.hf_hub_download,
+                self.repo_id,
+                MODEL_FILENAME,
+                local_dir=str(workdir),
+                token=self.token,
+            )
+        else:
+            shutil.copy(self.local_dir / MODEL_FILENAME, workdir / MODEL_FILENAME)
         # tokenizer is best-effort (required only for the first launch)
         try:
             if self.backend == "hf":
