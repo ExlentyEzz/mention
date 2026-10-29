@@ -330,9 +330,12 @@ def run_pretrain(
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
                 step += 1
-                tokens_total += B * L * accelerator.num_processes
+                tokens_this_step = (
+                    B * cfg.grad_accum * accelerator.num_processes
+                )
+                tokens_total += tokens_this_step
                 loss_meter.add(loss.item())
-                tok_meter.add(B * L * accelerator.num_processes, 1)
+                tok_meter.add(tokens_this_step, 1)
 
             # --- logging --------------------------------------------------
             if step % cfg.log_every_steps == 0 and step > start_step and step != last_log:
