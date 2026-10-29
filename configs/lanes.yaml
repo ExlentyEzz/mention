@@ -1,0 +1,22 @@
+# Lanes = free compute sessions that co-train one model.
+# Each lane needs its own HF token (env var name is in hf_token_env).
+# budget_min: how many minutes the session is allowed to train
+# (Kaggle: ~660 min=11h; Colab: ~540 min=9h; always leave margin before the
+# platform kills the session for idle/limit).
+
+lanes:
+  kaggle-1:
+    type: kaggle
+    hf_token_env: HF_TOKEN
+    budget_min: 660
+    gpus: 2
+  kaggle-2:
+    type: kaggle
+    hf_token_env: HF_TOKEN_KAGGLE2
+    budget_min: 660
+    gpus: 2
+  colab:
+    type: colab
+    hf_token_env: HF_TOKEN_COLAB
+    budget_min: 540
+    gpus: 1

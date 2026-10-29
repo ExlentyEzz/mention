@@ -1,0 +1,40 @@
+# Main run: ~300M params, ~6.5B tokens per rank (~13B with 2 GPUs/rank-pair)
+# Expect ~1.5-2 months with 2 Kaggle accounts + Colab.
+
+model:
+  vocab_size: 49152            # overwritten by the real tokenizer at runtime
+  d_model: 1024
+  n_layers: 16
+  n_heads: 16
+  n_kv_heads: 4                # GQA
+  dim_ff: 4096
+  max_seq_len: 2048
+  rope_theta: 10000.0
+  dropout: 0.0
+
+data:
+  en_dataset: "HuggingFaceFW/fineweb-edu"
+  ru_dataset: "mc4"
+  ru_config: "ru"
+  en_prob: 0.55
+  seq_len: 2048
+  tokenizer_vocab: 49152
+
+train:
+  max_steps: 100000
+  learning_rate: 4.0e-4
+  min_lr_ratio: 0.1
+  warmup_steps: 2000
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  micro_batch_size: 4           # per GPU per forward
+  grad_accum: 8                 # tokens per optimizer step = 4*8*2048 = 65k
+  fp16: true
+  origin_prob: 0.015
+  log_every_steps: 20
+  save_every_steps: 500
+  push_every_min: 120
+  seed: 42
+  gradient_checkpointing: false

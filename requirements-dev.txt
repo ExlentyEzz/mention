@@ -1,0 +1,2 @@
+# Local development (Windows, CPU/1660 Ti) - same as Kaggle, nothing extra
+-r requirements-kaggle.txt

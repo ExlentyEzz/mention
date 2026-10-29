@@ -1,0 +1,40 @@
+# Pilot: ~50M params, ~0.8B tokens per rank (1-2 weeks on 1-2 Kaggle accounts)
+# Goal: validate the whole pipeline end-to-end before the 300M run.
+
+model:
+  vocab_size: 32768            # overwritten by the real tokenizer at runtime
+  d_model: 512
+  n_layers: 8
+  n_heads: 8
+  n_kv_heads: 8
+  dim_ff: 2048
+  max_seq_len: 2048
+  rope_theta: 10000.0
+  dropout: 0.0
+
+data:
+  en_dataset: "HuggingFaceFW/fineweb-edu"
+  ru_dataset: "mc4"
+  ru_config: "ru"
+  en_prob: 0.55
+  seq_len: 2048
+  tokenizer_vocab: 32768
+
+train:
+  max_steps: 12000
+  learning_rate: 6.0e-4
+  min_lr_ratio: 0.1
+  warmup_steps: 400
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  micro_batch_size: 8           # per GPU per forward
+  grad_accum: 4                 # tokens per optimizer step = 8*4*2048 = 65k
+  fp16: true                    # T4/P100 have no bf16
+  origin_prob: 0.015            # share of full-length (unmasked) examples
+  log_every_steps: 20
+  save_every_steps: 500
+  push_every_min: 120           # push checkpoint to hub every 2h
+  seed: 42
+  gradient_checkpointing: false

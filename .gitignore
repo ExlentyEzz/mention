@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Secrets — NEVER commit these
+.env
+.env.*
+!.env.example
+runs/*.log
+
+# Local artifacts / checkpoints
+runs/
+artifacts/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
