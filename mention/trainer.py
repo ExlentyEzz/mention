@@ -219,15 +219,25 @@ def run_pretrain(
         print_rank0(f"[{lane_name}] resumed from step {start_step}")
 
     # ---- lease -----------------------------------------------------------
-    # Only the main rank talks to the hub; the result is broadcast to all ranks.
-    acquired_flag = torch.zeros(1, dtype=torch.long, device=accelerator.device)
+    # Only the main rank talks to the hub; the outcome is shared via a marker
+    # file on the shared filesystem (workdir is shared across ranks).
+    ok = True
     if accelerator.is_main_process:
         ok = hub.acquire_lease(
             lane_name, ttl_min=90, max_wait_min=8, force=force_lease
         )
-        acquired_flag[0] = 1 if ok else 0
-    accelerator.broadcast(acquired_flag)
-    if acquired_flag.item() != 1:
+        marker = workdir / ("lease_ok" if ok else "lease_busy")
+        marker.touch(exist_ok=True)
+    else:
+        deadline = time.monotonic() + 120
+        while not (workdir / "lease_ok").exists() and not (
+            workdir / "lease_busy"
+        ).exists():
+            if time.monotonic() > deadline:
+                break
+            time.sleep(1)
+        ok = (workdir / "lease_ok").exists()
+    if not ok:
         print_rank0(
             f"[{lane_name}] lease busy (another lane trains). Exiting without training."
         )
