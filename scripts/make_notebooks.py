@@ -55,7 +55,6 @@ COLAB_INTRO = """\
 """
 
 kaggle_cells = [
-    code("!pip install -q -r /kaggle/working/mention/requirements-kaggle.txt\n"),
     code(
         "import os\n"
         "from kaggle_secrets import UserSecretsClient\n"
@@ -64,9 +63,11 @@ kaggle_cells = [
     ),
     code(
         "# скачай код проекта (один раз на сессию)\n"
-        "!git clone https://github.com/ExlentyEzz/mention.git /kaggle/working/mention || true\n"
+        "!git clone --depth 1 https://github.com/ExlentyEzz/mention.git /kaggle/working/mention\n"
+        "!test -f /kaggle/working/mention/requirements-kaggle.txt && echo CLONE_OK || echo CLONE_FAILED\n"
         "%cd /kaggle/working/mention\n"
     ),
+    code("!pip install -q -r requirements-kaggle.txt\n"),
     code(
         "!accelerate launch --num_processes=2 --mixed_precision=fp16 \\\n"
         "    scripts/run_lane.py \\\n"
@@ -77,16 +78,17 @@ kaggle_cells = [
 ]
 
 colab_cells = [
-    code("!pip install -q -r /content/mention/requirements-kaggle.txt\n"),
     code(
         "import os\n"
         "from google.colab import userdata\n"
         'os.environ["HF_TOKEN"] = userdata.get("HF_TOKEN")\n'
     ),
     code(
-        "!git clone https://github.com/ExlentyEzz/mention.git /content/mention || true\n"
+        "!git clone --depth 1 https://github.com/ExlentyEzz/mention.git /content/mention\n"
+        "!test -f /content/mention/requirements-kaggle.txt && echo CLONE_OK || echo CLONE_FAILED\n"
         "%cd /content/mention\n"
     ),
+    code("!pip install -q -r requirements-kaggle.txt\n"),
     code(
         "!accelerate launch --num_processes=1 --mixed_precision=fp16 \\\n"
         "    scripts/run_lane.py \\\n"
