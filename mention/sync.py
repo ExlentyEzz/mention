@@ -1,24 +1,17 @@
-"""Checkpoint hub + session lease.
+"""Checkpoint hub + session lease (with retries and multi-file commits).
 
 Backends:
   - "hf":   private Hugging Face model repo (recommended). Needs HF_TOKEN access.
   - "local": plain directory on disk (offline tests / local runs).
 
-Repo layout:
-  checkpoint/model.safetensors   latest model weights (fp32)
-  checkpoint/meta.json           {"step": int, "tokens": int, "lr": float, ...}
-  lease/lease.json               {"owner": str, "started_at", "heartbeat_at", "expires_at"}
-
-Lease semantics:
-  Only one lane trains at a time. A lane tries to acquire the lease on start;
-  if it is alive (heartbeat within ttl), it waits; otherwise it takes over.
-  The owner must heartbeat periodically (default every 45 min, ttl 90 min)
-  and release on clean exit.
+All HF writes go through a retry wrapper (429/5xx from HF Hub are transient)
+and multi-file uploads are batched into a single commit to stay under rate
+limits. Only the main (rank 0) process should call mutating hub methods;
+trainers must guard with `accelerator.is_main_process`.
 """
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import threading
 import time
@@ -32,6 +25,29 @@ META_FILENAME = "checkpoint/meta.json"
 MODEL_FILENAME = "checkpoint/model.safetensors"
 TOKENIZER_FILENAME = "checkpoint/tokenizer.json"
 CONFIG_FILENAME = "checkpoint/config.yaml"
+
+
+def _retry(fn, *args, retries: int = 6, base_delay: float = 2.0, **kwargs):
+    """Call fn(*args, **kwargs), retrying on transient HTTP errors."""
+    last = None
+    for attempt in range(retries):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001 - HF raises several exceptions
+            import httpx
+            from huggingface_hub.errors import HfHubHTTPError
+
+            if isinstance(e, HfHubHTTPError):
+                code = e.response.status_code if e.response is not None else None
+                if code not in (429, 500, 502, 503, 504):
+                    raise
+            elif not isinstance(e, (httpx.HTTPError, ConnectionError, TimeoutError)):
+                raise
+            last = e
+            delay = base_delay * (2 ** attempt)
+            print(f"[sync] transient HF error ({e}); retry in {delay:.0f}s ...")
+            time.sleep(delay)
+    raise last
 
 
 class CheckpointHub:
@@ -61,8 +77,12 @@ class CheckpointHub:
             from huggingface_hub import HfApi
 
             self._api = HfApi(token=self.token)
-            self._api.create_repo(
-                self.repo_id, repo_type="model", private=True, exist_ok=True
+            _retry(
+                self._api.create_repo,
+                self.repo_id,
+                repo_type="model",
+                private=True,
+                exist_ok=True,
             )
         else:
             self.local_dir.mkdir(parents=True, exist_ok=True)
@@ -74,39 +94,58 @@ class CheckpointHub:
     def _exists(self, filename: str) -> bool:
         if self.backend == "hf":
             try:
-                self._api.file_exists(self.repo_id, filename)  # type: ignore[union-attr]
+                return _retry(self._api.file_exists, self.repo_id, filename)  # type: ignore[union-attr]
             except Exception:
                 return False
-        else:
-            return (self.local_dir / filename).exists()
+        return (self.local_dir / filename).exists()
 
     def _read_json(self, filename: str) -> Optional[Dict[str, Any]]:
         if not self._exists(filename):
             return None
         if self.backend == "hf":
-            path = self._api.hf_hub_download(  # type: ignore[union-attr]
-                self.repo_id, filename, token=self.token
+            path = _retry(  # type: ignore[union-attr]
+                self._api.hf_hub_download,
+                self.repo_id,
+                filename,
+                token=self.token,
             )
         else:
             path = self.local_dir / filename
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
+    def _upload_multiple(self, files: Dict[str, str]) -> None:
+        """Upload {path_in_repo: local_path} in one commit (HF only)."""
+        if self.backend == "local":
+            for path_in_repo, local_path in files.items():
+                dst = self.local_dir / path_in_repo
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                if Path(local_path).resolve() != dst.resolve():
+                    shutil.copy(local_path, dst)
+            return
+        from huggingface_hub import UploadOperation
+
+        ops = [
+            UploadOperation(path_or_fileobj=local_path, path_in_repo=path_in_repo)
+            for path_in_repo, local_path in files.items()
+        ]
+        _retry(
+            self._api.create_commit,  # type: ignore[union-attr]
+            self.repo_id,
+            operations=ops,
+            commit_message="mention: sync checkpoint",
+        )
+
     def _write_json(self, filename: str, obj: Dict[str, Any]) -> None:
         tmp = self.local_dir / filename
         tmp.parent.mkdir(parents=True, exist_ok=True)
         tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
-        if self.backend == "hf":
-            self._api.upload_file(  # type: ignore[union-attr]
-                path_or_fileobj=str(tmp),
-                path_in_repo=filename,
-                repo_id=self.repo_id,
-            )
+        self._upload_multiple({filename: str(tmp)})
 
     def _delete(self, filename: str) -> None:
         if self.backend == "hf":
             try:
-                self._api.delete_file(filename, self.repo_id)  # type: ignore[union-attr]
+                _retry(self._api.delete_file, filename, self.repo_id)  # type: ignore[union-attr]
             except Exception:
                 pass
         else:
@@ -127,7 +166,8 @@ class CheckpointHub:
             return None
         try:
             if self.backend == "hf":
-                self._api.hf_hub_download(  # type: ignore[union-attr]
+                _retry(  # type: ignore[union-attr]
+                    self._api.hf_hub_download,
                     self.repo_id,
                     MODEL_FILENAME,
                     local_dir=str(workdir),
@@ -141,7 +181,8 @@ class CheckpointHub:
         # tokenizer is best-effort (required only for the first launch)
         try:
             if self.backend == "hf":
-                self._api.hf_hub_download(  # type: ignore[union-attr]
+                _retry(  # type: ignore[union-attr]
+                    self._api.hf_hub_download,
                     self.repo_id,
                     TOKENIZER_FILENAME,
                     local_dir=str(workdir),
@@ -163,48 +204,36 @@ class CheckpointHub:
         include_tokenizer: bool = True,
     ) -> None:
         workdir = Path(workdir)
-        self._write_json(META_FILENAME, meta)
-        if self.backend == "hf":
-            self._api.upload_file(  # type: ignore[union-attr]
-                path_or_fileobj=str(workdir / MODEL_FILENAME),
-                path_in_repo=MODEL_FILENAME,
-                repo_id=self.repo_id,
-            )
-            if include_tokenizer and (workdir / TOKENIZER_FILENAME).exists():
-                self._api.upload_file(  # type: ignore[union-attr]
-                    path_or_fileobj=str(workdir / TOKENIZER_FILENAME),
-                    path_in_repo=TOKENIZER_FILENAME,
-                    repo_id=self.repo_id,
-                )
-        else:
-            shutil.copy(workdir / MODEL_FILENAME, self.local_dir / MODEL_FILENAME)
-            if include_tokenizer and (workdir / TOKENIZER_FILENAME).exists():
-                shutil.copy(
-                    workdir / TOKENIZER_FILENAME, self.local_dir / TOKENIZER_FILENAME
-                )
+        files: Dict[str, str] = {}
+        meta_path = workdir / META_FILENAME
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        files[META_FILENAME] = str(meta_path)
+        files[MODEL_FILENAME] = str(workdir / MODEL_FILENAME)
+        if include_tokenizer and (workdir / TOKENIZER_FILENAME).exists():
+            files[TOKENIZER_FILENAME] = str(workdir / TOKENIZER_FILENAME)
+        self._upload_multiple(files)
 
     def upload_seed_files(self, workdir: str | Path) -> None:
-        """Upload tokenizer + a bootstrap meta.json once (called by seed script).
-
-        meta.json is needed so that pull_latest() (which keys off meta) will
-        also fetch the tokenizer on the very first training run.
-        """
+        """Upload tokenizer + a bootstrap meta.json once (called by seed script)."""
         workdir = Path(workdir)
+        files: Dict[str, str] = {}
         if (workdir / TOKENIZER_FILENAME).exists():
-            if self.backend == "hf":
-                self._api.upload_file(  # type: ignore[union-attr]
-                    path_or_fileobj=str(workdir / TOKENIZER_FILENAME),
-                    path_in_repo=TOKENIZER_FILENAME,
-                    repo_id=self.repo_id,
-                )
-            else:
-                shutil.copy(
-                    workdir / TOKENIZER_FILENAME, self.local_dir / TOKENIZER_FILENAME
-                )
-        self._write_json(
-            META_FILENAME,
-            {"step": 0, "tokens": 0, "seed": True, "created_at": now_iso()},
+            files[TOKENIZER_FILENAME] = str(workdir / TOKENIZER_FILENAME)
+        meta = workdir / META_FILENAME
+        meta.parent.mkdir(parents=True, exist_ok=True)
+        meta.write_text(
+            json.dumps(
+                {"step": 0, "tokens": 0, "seed": True, "created_at": now_iso()},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
         )
+        files[META_FILENAME] = str(meta)
+        self._upload_multiple(files)
 
     def pull_tokenizer_if_missing(self, workdir: str | Path) -> bool:
         """Best-effort download of tokenizer even when no checkpoint exists yet."""
@@ -215,7 +244,8 @@ class CheckpointHub:
             return False
         try:
             if self.backend == "hf":
-                self._api.hf_hub_download(  # type: ignore[union-attr]
+                _retry(  # type: ignore[union-attr]
+                    self._api.hf_hub_download,
                     self.repo_id,
                     TOKENIZER_FILENAME,
                     local_dir=str(workdir),

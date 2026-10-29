@@ -27,6 +27,14 @@ from .sync import CheckpointHub, HeartbeatThread
 from .utils import AvgMeter, count_params, estimate_tok_per_sec, print_rank0, set_seed
 
 
+def _am_i_main() -> bool:
+    """True on the global rank-0 process (works with `accelerate launch`)."""
+    try:
+        return os.environ.get("LOCAL_RANK", "0") in ("0", "")
+    except Exception:
+        return True
+
+
 class TrainConfig:
     def __init__(self, d: Dict[str, Any]):
         t = d.get("train", {})
@@ -101,31 +109,49 @@ def run_pretrain(
     from .model import ModelConfig  # noqa: F401 (re-import for clarity)
 
     # tokenizer: pull from hub, or bootstrap-train it right here on the lane.
+    # Only the main rank trains/uploadsa; other ranks wait for the file.
     tok_path = workdir / "checkpoint/tokenizer.json"
     if not tok_path.exists():
         if cfg.smoke:
             tok_path = make_smoke_tokenizer()
-        elif not hub.pull_tokenizer_if_missing(workdir):
-            print_rank0(
-                f"[{lane_name}] no tokenizer in hub — bootstrapping one "
-                f"(vocab {cfg.tokenizer_vocab}, {cfg.tokenizer_samples} samples/source) ..."
-            )
-            from .data import iter_raw_texts
-            from .tokenizer import train_bpe_from_iterators
+        else:
+            have = hub.pull_tokenizer_if_missing(workdir)
+            if not have:
+                if _am_i_main():
+                    print_rank0(
+                        f"[{lane_name}] no tokenizer in hub — bootstrapping one "
+                        f"(vocab {cfg.tokenizer_vocab}, "
+                        f"{cfg.tokenizer_samples} samples/source) ..."
+                    )
+                    from .data import iter_raw_texts
+                    from .tokenizer import train_bpe_from_iterators
 
-            en = iter_raw_texts("HuggingFaceFW/fineweb-edu", None, cfg.tokenizer_samples)
-            ru = iter_raw_texts(
-                "HuggingFaceFW/fineweb-2", "rus_Cyrl", cfg.tokenizer_samples
-            )
-            tok_path.parent.mkdir(parents=True, exist_ok=True)
-            train_bpe_from_iterators(
-                [en, ru],
-                vocab_size=cfg.tokenizer_vocab,
-                out_path=tok_path,
-                min_frequency=2,
-            )
-            hub.upload_seed_files(workdir)
-            print_rank0(f"[{lane_name}] bootstrap tokenizer saved and uploaded")
+                    en = iter_raw_texts(
+                        "HuggingFaceFW/fineweb-edu", None, cfg.tokenizer_samples
+                    )
+                    ru = iter_raw_texts(
+                        "HuggingFaceFW/fineweb-2", "rus_Cyrl", cfg.tokenizer_samples
+                    )
+                    tok_path.parent.mkdir(parents=True, exist_ok=True)
+                    train_bpe_from_iterators(
+                        [en, ru],
+                        vocab_size=cfg.tokenizer_vocab,
+                        out_path=tok_path,
+                        min_frequency=2,
+                    )
+                    hub.upload_seed_files(workdir)
+                    print_rank0(f"[{lane_name}] bootstrap tokenizer saved and uploaded")
+                else:
+                    # non-main ranks wait until main created the tokenizer file
+                    deadline = time.monotonic() + 900
+                    while not tok_path.exists():
+                        time.sleep(5)
+                        if time.monotonic() > deadline:
+                            break
+            if not tok_path.exists():
+                raise FileNotFoundError(
+                    f"tokenizer not found at {tok_path} (and could not be created)"
+                )
     from .tokenizer import load_tokenizer, mask_id
 
     tok = load_tokenizer(tok_path)
@@ -193,17 +219,24 @@ def run_pretrain(
         print_rank0(f"[{lane_name}] resumed from step {start_step}")
 
     # ---- lease -----------------------------------------------------------
-    acquired = hub.acquire_lease(
-        lane_name, ttl_min=90, max_wait_min=8, force=force_lease
-    )
-    if not acquired:
+    # Only the main rank talks to the hub; the result is broadcast to all ranks.
+    acquired_flag = torch.zeros(1, dtype=torch.long, device=accelerator.device)
+    if accelerator.is_main_process:
+        ok = hub.acquire_lease(
+            lane_name, ttl_min=90, max_wait_min=8, force=force_lease
+        )
+        acquired_flag[0] = 1 if ok else 0
+    accelerator.broadcast(acquired_flag)
+    if acquired_flag.item() != 1:
         print_rank0(
             f"[{lane_name}] lease busy (another lane trains). Exiting without training."
         )
         return {"status": "lease-busy", "step": start_step}
 
-    hb = HeartbeatThread(hub, lane_name, interval_s=2700)  # 45 min
-    hb.start()
+    hb: HeartbeatThread | None = None
+    if accelerator.is_main_process:
+        hb = HeartbeatThread(hub, lane_name, interval_s=2700)  # 45 min
+        hb.start()
 
     min_lr = cfg.learning_rate * cfg.min_lr_ratio
     loss_meter = AvgMeter()
@@ -221,6 +254,8 @@ def run_pretrain(
             w.writerow(["step", "tokens", "loss", "tokens_per_s", "lr"])
 
     def save_and_push(final: bool = False):
+        if not accelerator.is_main_process:
+            return
         unwrapped = accelerator.unwrap_model(model)
         state = {k: v.detach().float().cpu() for k, v in unwrapped.state_dict().items()}
         # lm_head.weight is tied to wte.weight (shared memory) - save once
@@ -324,8 +359,10 @@ def run_pretrain(
         print_rank0(f"[{lane_name}] interrupted, saving...")
         save_and_push(final=True)
     finally:
-        hb.stop()
-        hub.release(lane_name)
+        if hb is not None:
+            hb.stop()
+        if accelerator.is_main_process:
+            hub.release(lane_name)
 
     wall = time.monotonic() - t0
     tps = estimate_tok_per_sec(step - start_step, cfg.tokens_per_opt_step, wall)
