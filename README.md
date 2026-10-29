@@ -67,6 +67,36 @@ python scripts/run_lane.py \
 
 ---
 
+## SFT на готовой LLaDA (режим «переделываем на свою»)
+
+Быстрый путь к **«Mention 1»**: берём готовые диффузионные веса
+(LLaDA-8B-Base, iLLaDA-8B, либо LLaDA-MoE-7B-A1B — у последнего лишь
+~1B активных параметров, поэтому он быстрее на T4) и дообучаем на инструкциях
+через **LoRA/QLoRA** + маскированно-диффузионная цель.
+
+```bash
+python scripts/sft_llada.py \
+    --base-model inclusionAI/LLaDA-MoE-7B-A1B-Base \
+    --dataset yahma/alpaca-cleaned \
+    --steps 1500 --batch-size 1 --grad-accum 8 \
+    --lora-r 16 --lora-alpha 32 --load-in-4bit \
+    --out runs/sft-mention-1 \
+    --push-repo YOUR_HF_USERNAME/mention-1
+```
+
+Ключевое:
+- Модель грузится через `transformers` (`trust_remote_code=True`), LoRA-цели
+  определяются автоматически (`q_proj/k_proj/v_proj/attn_out/ff_proj/up_proj/ff_out`).
+- Объектив: промпт остаётся открытым, случайная доля токенов ответа маскируется,
+  модель учится их восстанавливать (стандартное условное диффузионное SFT).
+- `--push-repo` после обучения собирает LoRA в полную модель и заливает на HF Hub.
+
+> ⚠️ На бесплатной T4: обязательно `--load-in-4bit`, маленький `--batch-size`,
+> `--grad-accum` для эффективного батча. Масштаб «8B в полном fine-tune» требует
+> арендованной GPU.
+
+---
+
 ## Как это работает
 
 ```

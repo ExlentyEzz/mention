@@ -7,3 +7,7 @@ safetensors>=0.4.0
 huggingface_hub>=0.23.0
 pyyaml>=6.0
 numpy>=1.26.0
+# SFT of LLaDA-family models (scripts/sft_llada.py)
+transformers>=4.38.0
+peft>=0.11.0
+bitsandbytes>=0.43.0
