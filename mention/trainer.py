@@ -46,6 +46,8 @@ class TrainConfig:
         self.save_every_steps = int(t.get("save_every_steps", 500))
         self.push_every_min = int(t.get("push_every_min", 120))
         self.en_prob = float(t.get("en_prob", 0.55))
+        self.tokenizer_samples = int(t.get("tokenizer_samples", 60000))
+        self.tokenizer_vocab = int(d.get("data", {}).get("tokenizer_vocab", 32768))
         self.seed = int(t.get("seed", 42))
         self.smoke = bool(d.get("smoke", False))
         self.seq_len = int(d.get("data", {}).get("seq_len", 2048))
@@ -98,15 +100,32 @@ def run_pretrain(
     # ---- model config ----------------------------------------------------
     from .model import ModelConfig  # noqa: F401 (re-import for clarity)
 
-    # tokenizer: either pulled from hub by run_lane, or built locally
+    # tokenizer: pull from hub, or bootstrap-train it right here on the lane.
     tok_path = workdir / "checkpoint/tokenizer.json"
     if not tok_path.exists():
         if cfg.smoke:
             tok_path = make_smoke_tokenizer()
-        else:
-            raise FileNotFoundError(
-                f"tokenizer not found at {tok_path}; run train_tokenizer.py first"
+        elif not hub.pull_tokenizer_if_missing(workdir):
+            print_rank0(
+                f"[{lane_name}] no tokenizer in hub — bootstrapping one "
+                f"(vocab {cfg.tokenizer_vocab}, {cfg.tokenizer_samples} samples/source) ..."
             )
+            from .data import iter_raw_texts
+            from .tokenizer import train_bpe_from_iterators
+
+            en = iter_raw_texts("HuggingFaceFW/fineweb-edu", None, cfg.tokenizer_samples)
+            ru = iter_raw_texts(
+                "HuggingFaceFW/fineweb-2", "rus_Cyrl", cfg.tokenizer_samples
+            )
+            tok_path.parent.mkdir(parents=True, exist_ok=True)
+            train_bpe_from_iterators(
+                [en, ru],
+                vocab_size=cfg.tokenizer_vocab,
+                out_path=tok_path,
+                min_frequency=2,
+            )
+            hub.upload_seed_files(workdir)
+            print_rank0(f"[{lane_name}] bootstrap tokenizer saved and uploaded")
     from .tokenizer import load_tokenizer, mask_id
 
     tok = load_tokenizer(tok_path)

@@ -97,6 +97,26 @@ class TinySmokeCorpus(IterableDataset):
                 yield row
 
 
+def iter_raw_texts(
+    dataset: str,
+    config: Optional[str],
+    limit: Optional[int] = None,
+) -> Iterator[str]:
+    """Stream raw 'text' fields without a tokenizer (used by tokenizer training)."""
+    from datasets import load_dataset
+
+    kwargs = dict(split="train", streaming=True)
+    if config:
+        kwargs["name"] = config
+    ds = load_dataset(dataset, **kwargs)  # type: ignore[call-overload]
+    import itertools
+
+    for ex in itertools.islice(ds, limit):
+        text = ex.get("text")
+        if isinstance(text, str) and text.strip():
+            yield text
+
+
 def make_dataloader(
     corpus: IterableDataset,
     micro_batch: int,

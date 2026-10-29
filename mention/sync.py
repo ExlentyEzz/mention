@@ -184,10 +184,13 @@ class CheckpointHub:
                 )
 
     def upload_seed_files(self, workdir: str | Path) -> None:
-        """Upload tokenizer + config once (called by seed script)."""
+        """Upload tokenizer + a bootstrap meta.json once (called by seed script).
+
+        meta.json is needed so that pull_latest() (which keys off meta) will
+        also fetch the tokenizer on the very first training run.
+        """
         workdir = Path(workdir)
         if (workdir / TOKENIZER_FILENAME).exists():
-            self._write_json(TOKENIZER_FILENAME, {"uploaded": now_iso()})
             if self.backend == "hf":
                 self._api.upload_file(  # type: ignore[union-attr]
                     path_or_fileobj=str(workdir / TOKENIZER_FILENAME),
@@ -198,6 +201,34 @@ class CheckpointHub:
                 shutil.copy(
                     workdir / TOKENIZER_FILENAME, self.local_dir / TOKENIZER_FILENAME
                 )
+        self._write_json(
+            META_FILENAME,
+            {"step": 0, "tokens": 0, "seed": True, "created_at": now_iso()},
+        )
+
+    def pull_tokenizer_if_missing(self, workdir: str | Path) -> bool:
+        """Best-effort download of tokenizer even when no checkpoint exists yet."""
+        workdir = Path(workdir)
+        if (workdir / TOKENIZER_FILENAME).exists():
+            return True
+        if not self._exists(TOKENIZER_FILENAME):
+            return False
+        try:
+            if self.backend == "hf":
+                self._api.hf_hub_download(  # type: ignore[union-attr]
+                    self.repo_id,
+                    TOKENIZER_FILENAME,
+                    local_dir=str(workdir),
+                    token=self.token,
+                )
+            else:
+                shutil.copy(
+                    self.local_dir / TOKENIZER_FILENAME,
+                    workdir / TOKENIZER_FILENAME,
+                )
+            return True
+        except FileNotFoundError:
+            return False
 
     # -- lease -------------------------------------------------------------
 

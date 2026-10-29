@@ -17,15 +17,41 @@ MASK_TOKEN = "<|mask|>"
 UNK_TOKEN = "<|unk|>"
 
 
+def _make_bpe(vocab_size: int, min_frequency: int) -> Tokenizer:
+    tok = Tokenizer(models.BPE())
+    tok.normalizer = normalizers.NFKC()
+    tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    tok.decoder = decoders.ByteLevel()
+    return tok
+
+
+def train_bpe_from_iterators(
+    iterables: Iterable[Iterable[str]],
+    vocab_size: int,
+    out_path: str | Path,
+    min_frequency: int = 2,
+    show_progress: bool = True,
+) -> Tokenizer:
+    tok = _make_bpe(vocab_size, min_frequency)
+    trainer = trainers.BpeTrainer(
+        vocab_size=vocab_size,
+        special_tokens=[PAD_TOKEN, MASK_TOKEN, UNK_TOKEN],
+        min_frequency=min_frequency,
+        show_progress=show_progress,
+    )
+    import itertools
+
+    tok.train_from_iterator(itertools.chain(*iterables), trainer)
+    tok.save(str(out_path))
+    return tok
+
+
 def train_bpe(
     files: Iterable[str | Path],
     vocab_size: int,
     out_path: str | Path,
 ) -> Tokenizer:
-    tok = Tokenizer(models.BPE())
-    tok.normalizer = normalizers.NFKC()
-    tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
-    tok.decoder = decoders.ByteLevel()
+    tok = _make_bpe(vocab_size, 2)
     trainer = trainers.BpeTrainer(
         vocab_size=vocab_size,
         special_tokens=[PAD_TOKEN, MASK_TOKEN, UNK_TOKEN],

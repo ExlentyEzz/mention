@@ -21,25 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from mention.tokenizer import (  # noqa: E402
-    MASK_TOKEN,
-    PAD_TOKEN,
-    UNK_TOKEN,
-    train_bpe,
-)
-
-
-def stream_texts(dataset: str, config: str | None, limit: int):
-    from datasets import load_dataset
-
-    kwargs = dict(split="train", streaming=True)
-    if config:
-        kwargs["name"] = config
-    ds = load_dataset(dataset, **kwargs)  # type: ignore[call-overload]
-    for ex in itertools.islice(ds, limit):
-        text = ex.get("text")
-        if isinstance(text, str) and text.strip():
-            yield text
+from mention.data import iter_raw_texts  # noqa: E402
+from mention.tokenizer import train_bpe_from_iterators  # noqa: E402
 
 
 def main() -> None:
@@ -57,29 +40,17 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[tokenizer] sampling EN from {args.en_dataset} ...")
-    en = stream_texts(args.en_dataset, None, args.samples_per_source)
+    en = iter_raw_texts(args.en_dataset, None, args.samples_per_source)
     print(f"[tokenizer] sampling RU from {args.ru_dataset}/{args.ru_config} ...")
-    ru = stream_texts(args.ru_dataset, args.ru_config, args.samples_per_source)
-    texts = itertools.chain(en, ru)
-
-    import tokenizers
-    from tokenizers import Tokenizer, models, pre_tokenizers, trainers
-    from tokenizers import decoders, normalizers
-
-    tok = Tokenizer(models.BPE())
-    tok.normalizer = normalizers.NFKC()
-    tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
-    tok.decoder = decoders.ByteLevel()
-    trainer = trainers.BpeTrainer(
-        vocab_size=args.vocab_size,
-        special_tokens=[PAD_TOKEN, MASK_TOKEN, UNK_TOKEN],
-        min_frequency=args.min_frequency,
-        show_progress=True,
-    )
-    tok.train_from_iterator(texts, trainer)
+    ru = iter_raw_texts(args.ru_dataset, args.ru_config, args.samples_per_source)
 
     tok_path = out_dir / "tokenizer.json"
-    tok.save(str(tok_path))
+    tok = train_bpe_from_iterators(
+        [en, ru],
+        vocab_size=args.vocab_size,
+        out_path=tok_path,
+        min_frequency=args.min_frequency,
+    )
 
     info = {
         "vocab_size": int(tok.get_vocab_size()),
