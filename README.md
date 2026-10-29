@@ -14,6 +14,59 @@
 
 ---
 
+## «Mention 1» — GPT-стиль претрейнинг (основной путь)
+
+По умолчанию модель обучается **как GPT** — на потоке общего текста из интернета,
+без какого-либо своего кода. Используй стандартные конфиги:
+
+```bash
+# двуязычный старт (EN+RU):
+python scripts/run_lane.py \
+    --config configs/pilot_40m.yaml \        # старт, ~50M
+    --lane kaggle-1 \
+    --repo YOUR_HF_USERNAME/mention-ckpt
+# затем масштабируйся: configs/pretrain_300m.yaml (300M)
+
+# мультиязычный режим (EN + RU/ZH/ES/FR/DE/...):
+python scripts/run_lane.py \
+    --config configs/pilot_multilingual_40m.yaml \     # старт
+    --lane kaggle-1 \
+    --repo YOUR_HF_USERNAME/mention-ckpt
+# затем: configs/pretrain_multilingual_300m.yaml
+```
+
+Корпус (уже настроен): `HuggingFaceFW/fineweb-edu` (EN) + `HuggingFaceFW/fineweb-2`
+(по-язычные конфиги). Смесь указывается в `data.sources` конфига.
+Данные стримятся автоматически, класть ничего не нужно.
+
+## «Mention 1» — кодинг-режим (опционально)
+
+Только если захочешь отдельную кодинг-версию. Включается конфигом
+`configs/coding_pilot_40m.yaml` (или ваш вариант):
+
+```bash
+python scripts/run_lane.py \
+    --config configs/coding_pilot_40m.yaml \
+    --lane kaggle-1 \
+    --repo YOUR_HF_USERNAME/mention-ckpt
+```
+
+Что меняется в код-режиме (`data.mode: code`):
+
+- Корпус вместо FineWeb/mC4 — **смесь открытых код-датасетов + твой приватный код**:
+  - открытые: `codeparrot/github-code` (python/javascript/java, веса и потоки по `code_sources` в конфиге);
+  - приватный: всё из `data/private/` (расширения перечислены в `mention/data_code.py`), доля задаётся `private_dir`/проблемой в источнике;
+- токенизатор при бустрапе обучается **на коде**, а не на тексте;
+- остальной пайплайн (MDLM-цель, лиз, чекпоинты в hub) — тот же.
+
+> ⚠️ Если `codeparrot/github-code` требует авторизации/принятия условий —
+> укажи в `code_sources` доступные вам датасеты (например, `bigcode/the-stack-v2`
+> или `HuggingFaceFW/fineweb-edu` как дополнение) и обязательно задай `HF_TOKEN`.
+
+Пост-обучение для кода: SFT на парных данных (инструкция → код), затем DPO/GRPO.
+
+---
+
 ## Как это работает
 
 ```

@@ -1,0 +1,45 @@
+# "Mention 1" — multilingual pilot (~50M). Validates the multi-language
+# pretraining pipeline (FineWeb-2 per-language configs) before scaling up.
+
+model:
+  vocab_size: 32768            # overwritten by the real tokenizer at runtime
+  d_model: 512
+  n_layers: 8
+  n_heads: 8
+  n_kv_heads: 8
+  dim_ff: 2048
+  max_seq_len: 2048
+  rope_theta: 10000.0
+  dropout: 0.0
+
+data:
+  mode: text
+  sources:
+    - { dataset: "HuggingFaceFW/fineweb-edu", config: null, prob: 0.30 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "rus_Cyrl", prob: 0.18 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "zho_Hans", prob: 0.14 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "spa_Latn", prob: 0.12 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "fra_Latn", prob: 0.10 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "deu_Latn", prob: 0.10 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "jpn_Jpan", prob: 0.06 }
+  seq_len: 2048
+  tokenizer_vocab: 32768
+
+train:
+  max_steps: 12000
+  learning_rate: 6.0e-4
+  min_lr_ratio: 0.1
+  warmup_steps: 400
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  micro_batch_size: 4           # per GPU per forward (OOM-safe on T4)
+  grad_accum: 8                 # 4*8*2048 = 65k tokens per optimizer step
+  fp16: true
+  origin_prob: 0.015
+  log_every_steps: 20
+  save_every_steps: 500
+  push_every_min: 120
+  seed: 42
+  gradient_checkpointing: false

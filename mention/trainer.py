@@ -22,6 +22,7 @@ import torch
 from accelerate import Accelerator
 
 from .data import StreamingLMCorpus, TinySmokeCorpus, make_dataloader
+from .data_code import iter_raw_code_texts, StreamingCodeCorpus
 from .model import MaskedDiffusionTransformer, ModelConfig
 from .sync import CheckpointHub, HeartbeatThread
 from .utils import AvgMeter, count_params, estimate_tok_per_sec, print_rank0, set_seed
@@ -56,6 +57,10 @@ class TrainConfig:
         self.en_prob = float(t.get("en_prob", 0.55))
         self.tokenizer_samples = int(t.get("tokenizer_samples", 60000))
         self.tokenizer_vocab = int(d.get("data", {}).get("tokenizer_vocab", 32768))
+        self.mode = str(d.get("data", {}).get("mode", "text"))
+        self.text_sources = d.get("data", {}).get("sources", None)
+        self.code_sources = d.get("data", {}).get("code_sources", None)
+        self.private_dir = str(d.get("data", {}).get("private_dir", "data/private"))
         self.seed = int(t.get("seed", 42))
         self.smoke = bool(d.get("smoke", False))
         self.seq_len = int(d.get("data", {}).get("seq_len", 2048))
@@ -126,15 +131,34 @@ def run_pretrain(
                     from .data import iter_raw_texts
                     from .tokenizer import train_bpe_from_iterators
 
-                    en = iter_raw_texts(
-                        "HuggingFaceFW/fineweb-edu", None, cfg.tokenizer_samples
-                    )
-                    ru = iter_raw_texts(
-                        "HuggingFaceFW/fineweb-2", "rus_Cyrl", cfg.tokenizer_samples
-                    )
+                    if cfg.mode == "code":
+                        # train the tokenizer on code (better encoding for Mention 1)
+                        samples = [
+                            iter_raw_code_texts(
+                                cfg.code_sources, cfg.private_dir, cfg.tokenizer_samples
+                            )
+                        ]
+                    elif cfg.text_sources:
+                        samples = [
+                            iter_raw_texts(
+                                s.get("dataset"), s.get("config"), cfg.tokenizer_samples
+                            )
+                            for s in cfg.text_sources
+                        ]
+                    else:
+                        samples = [
+                            iter_raw_texts(
+                                "HuggingFaceFW/fineweb-edu", None, cfg.tokenizer_samples
+                            ),
+                            iter_raw_texts(
+                                "HuggingFaceFW/fineweb-2",
+                                "rus_Cyrl",
+                                cfg.tokenizer_samples,
+                            ),
+                        ]
                     tok_path.parent.mkdir(parents=True, exist_ok=True)
                     train_bpe_from_iterators(
-                        [en, ru],
+                        samples,
                         vocab_size=cfg.tokenizer_vocab,
                         out_path=tok_path,
                         min_frequency=2,
@@ -182,11 +206,19 @@ def run_pretrain(
     # ---- data ------------------------------------------------------------
     if cfg.smoke:
         corpus = TinySmokeCorpus(tok, cfg.seq_len)
+    elif cfg.mode == "code":
+        corpus = StreamingCodeCorpus(
+            tokenizer=tok,
+            seq_len=cfg.seq_len,
+            sources=cfg.code_sources,
+            private_dir=cfg.private_dir,
+        )
     else:
         corpus = StreamingLMCorpus(
             tokenizer=tok,
             seq_len=cfg.seq_len,
             en_prob=cfg.en_prob,
+            sources=cfg.text_sources,
         )
     loader = make_dataloader(corpus, cfg.micro_batch_size)
 

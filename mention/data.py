@@ -15,6 +15,13 @@ from .tokenizer import Tokenizer
 
 
 class StreamingLMCorpus(IterableDataset):
+    """Streaming multilingual pretraining corpus.
+
+    Sources is a list of ``{"dataset": ..., "config": ..., "prob": ...}``.
+    Documents are drawn proportionally to `prob`; text is packed to exactly
+    seq_len tokens (partial remains carry over to the next row).
+    """
+
     def __init__(
         self,
         tokenizer: Tokenizer,
@@ -23,13 +30,17 @@ class StreamingLMCorpus(IterableDataset):
         ru_dataset: str = "HuggingFaceFW/fineweb-2",
         ru_config: str = "rus_Cyrl",
         en_prob: float = 0.55,
+        sources: Optional[List[Dict[str, Any]]] = None,
     ):
         self.tokenizer = tokenizer
         self.seq_len = seq_len
-        self.en_dataset = en_dataset
-        self.ru_dataset = ru_dataset
-        self.ru_config = ru_config
-        self.en_prob = en_prob
+        if sources:
+            self.sources = [dict(s) for s in sources]
+        else:
+            self.sources = [
+                {"dataset": en_dataset, "config": None, "prob": en_prob},
+                {"dataset": ru_dataset, "config": ru_config, "prob": 1.0 - en_prob},
+            ]
 
     def _make_stream(self, dataset: str, config: Optional[str]) -> Iterator[str]:
         from datasets import load_dataset
@@ -49,20 +60,26 @@ class StreamingLMCorpus(IterableDataset):
                 yield text
 
     def __iter__(self) -> Iterator[List[int]]:
-        en_it = self._make_stream(self.en_dataset, None)
-        ru_it = self._make_stream(self.ru_dataset, self.ru_config)
+        its = [
+            self._make_stream(s["dataset"], s.get("config")) for s in self.sources
+        ]
+        probs = [max(0.0, s.get("prob", 1.0)) for s in self.sources]
+        total = sum(probs)
+        if total <= 0:
+            probs = [1.0] * len(probs)
+        else:
+            probs = [p / total for p in probs]
 
         def _next_text() -> str:
-            nonlocal en_it, ru_it
+            nonlocal its
             while True:
-                src = en_it if random.random() < self.en_prob else ru_it
+                idx = random.choices(range(len(its)), weights=probs, k=1)[0]
                 try:
-                    return next(src)
+                    return next(its[idx])
                 except StopIteration:
-                    if src is en_it:
-                        en_it = self._make_stream(self.en_dataset, None)
-                    else:
-                        ru_it = self._make_stream(self.ru_dataset, self.ru_config)
+                    its[idx] = self._make_stream(
+                        self.sources[idx]["dataset"], self.sources[idx].get("config")
+                    )
 
         # document buffer: sample randomly from it, refresh with random eviction
         docbuf: List[str] = [_next_text() for _ in range(1024)]

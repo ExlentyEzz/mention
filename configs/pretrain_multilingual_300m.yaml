@@ -1,0 +1,50 @@
+# "Mention 1" — multilingual main run (~300M). Covers EN + many languages via
+# FineWeb-2 per-language configs. Expect ~1.5-2 months with 2 Kaggle accounts.
+
+model:
+  vocab_size: 49152            # overwritten by the real tokenizer at runtime
+  d_model: 1024
+  n_layers: 16
+  n_heads: 16
+  n_kv_heads: 4                # GQA
+  dim_ff: 4096
+  max_seq_len: 2048
+  rope_theta: 10000.0
+  dropout: 0.0
+
+data:
+  mode: text
+  sources:
+    - { dataset: "HuggingFaceFW/fineweb-edu", config: null, prob: 0.28 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "rus_Cyrl", prob: 0.14 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "zho_Hans", prob: 0.12 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "spa_Latn", prob: 0.10 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "fra_Latn", prob: 0.09 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "deu_Latn", prob: 0.09 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "por_Latn", prob: 0.05 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "jpn_Jpan", prob: 0.04 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "ara_Arab", prob: 0.03 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "ukr_Cyrl", prob: 0.02 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "hin_Deva", prob: 0.02 }
+    - { dataset: "HuggingFaceFW/fineweb-2", config: "vie_Latn", prob: 0.02 }
+  seq_len: 2048
+  tokenizer_vocab: 49152
+
+train:
+  max_steps: 100000
+  learning_rate: 4.0e-4
+  min_lr_ratio: 0.1
+  warmup_steps: 2000
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  micro_batch_size: 4           # per GPU per forward
+  grad_accum: 8                 # 4*8*2048 = 65k tokens per optimizer step
+  fp16: true
+  origin_prob: 0.015
+  log_every_steps: 20
+  save_every_steps: 500
+  push_every_min: 120
+  seed: 42
+  gradient_checkpointing: false

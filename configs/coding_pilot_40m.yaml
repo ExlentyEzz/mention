@@ -1,0 +1,52 @@
+# "Mention 1" — coding pilot: ~50M params, validates the code pipeline
+# before scaling to a larger coding model. Same architecture as the text pilot,
+# but trained on a mix of open code corpora + your private code in data/private/.
+
+model:
+  vocab_size: 32768            # overwritten by the real tokenizer at runtime
+  d_model: 512
+  n_layers: 8
+  n_heads: 8
+  n_kv_heads: 8
+  dim_ff: 2048
+  max_seq_len: 2048
+  rope_theta: 10000.0
+  dropout: 0.0
+
+data:
+  mode: code                    # use StreamingCodeCorpus
+  code_sources:
+    - dataset: "codeparrot/github-code"
+      config: "python"
+      field: "code"
+      prob: 0.45
+    - dataset: "codeparrot/github-code"
+      config: "javascript"
+      field: "code"
+      prob: 0.25
+    - dataset: "codeparrot/github-code"
+      config: "java"
+      field: "code"
+      prob: 0.15
+  private_dir: "data/private"   # put your own code here
+  seq_len: 2048
+  tokenizer_vocab: 32768
+
+train:
+  max_steps: 12000
+  learning_rate: 6.0e-4
+  min_lr_ratio: 0.1
+  warmup_steps: 400
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  micro_batch_size: 4           # per GPU per forward (OOM-safe on T4)
+  grad_accum: 8                 # 4*8*2048 = 65k tokens per optimizer step
+  fp16: true
+  origin_prob: 0.015            # share of full-length (unmasked) examples
+  log_every_steps: 20
+  save_every_steps: 500
+  push_every_min: 120           # push checkpoint to hub every 2h
+  seed: 42
+  gradient_checkpointing: false
