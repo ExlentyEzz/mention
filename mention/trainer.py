@@ -252,6 +252,7 @@ def run_pretrain(
     loss_meter = AvgMeter()
     tok_meter = AvgMeter()
     step = start_step
+    last_log = start_step
     tokens_total = int(meta.get("tokens", 0)) if meta else 0
     t0 = time.monotonic()
     t_last = t0
@@ -334,7 +335,7 @@ def run_pretrain(
                 tok_meter.add(B * L * accelerator.num_processes, 1)
 
             # --- logging --------------------------------------------------
-            if step % cfg.log_every_steps == 0 and step > start_step:
+            if step % cfg.log_every_steps == 0 and step > start_step and step != last_log:
                 now = time.monotonic()
                 dt = now - t_last
                 t_last = now
@@ -349,6 +350,7 @@ def run_pretrain(
                     w = csv.writer(f)
                     w.writerow([step, tokens_total, loss_meter.value, tps, lr_now])
                 loss_meter.reset()
+                last_log = step
 
             # --- periodic save/push --------------------------------------
             now = time.monotonic()
