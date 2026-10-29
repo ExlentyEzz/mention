@@ -99,17 +99,54 @@ colab_cells = [
 ]
 
 
+def _lane2_cells() -> list:
+    return [
+        code(
+            "import os\n"
+            "from kaggle_secrets import UserSecretsClient\n"
+            "secret = UserSecretsClient()\n"
+            'os.environ["HF_TOKEN_KAGGLE2"] = secret.get_secret("HF_TOKEN_KAGGLE2")\n'
+        ),
+        code(
+            "!rm -rf /kaggle/working/mention && git clone --depth 1 "
+            "https://github.com/ExlentyEzz/mention.git /kaggle/working/mention\n"
+            "!test -f /kaggle/working/mention/requirements-kaggle.txt && echo CLONE_OK "
+            "|| echo CLONE_FAILED\n"
+            "%cd /kaggle/working/mention\n"
+        ),
+        code("!pip install -q -r requirements-kaggle.txt\n"),
+        code(
+            "!accelerate launch --num_processes=2 --mixed_precision=fp16 \\\n"
+            "    scripts/run_lane.py \\\n"
+            "    --config configs/pilot_40m.yaml \\\n"
+            "    --lane kaggle-2 \\\n"
+            "    --repo Melifyy/mention-ckpt\n"
+        ),
+    ]
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "kaggle_lane.ipynb").write_text(
         json.dumps(notebook("Kaggle lane", KAGGLE_INTRO, kaggle_cells), indent=1),
         encoding="utf-8",
     )
+    (OUT / "kaggle_lane2.ipynb").write_text(
+        json.dumps(
+            notebook("Kaggle lane 2", KAGGLE_INTRO, _lane2_cells()), indent=1
+        ),
+        encoding="utf-8",
+    )
     (OUT / "colab_lane.ipynb").write_text(
         json.dumps(notebook("Colab lane", COLAB_INTRO, colab_cells), indent=1),
         encoding="utf-8",
     )
-    print("wrote", OUT / "kaggle_lane.ipynb", OUT / "colab_lane.ipynb")
+    print(
+        "wrote",
+        OUT / "kaggle_lane.ipynb",
+        OUT / "kaggle_lane2.ipynb",
+        OUT / "colab_lane.ipynb",
+    )
 
 
 if __name__ == "__main__":
