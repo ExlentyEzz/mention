@@ -148,8 +148,10 @@ class MaskedDiffusionTransformer(nn.Module):
         )
         self.ln_f = RMSNorm(cfg.d_model)
         self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size, bias=False)
-        # Tied embeddings: output projection shares the input embedding weights.
-        self.lm_head.weight = self.wte.weight
+        # NOTE: embeddings are intentionally NOT tied. Tying creates a huge
+        # self-logit (dot of a token embedding with itself) that makes the
+        # initial loss ~0 and encourages the model to copy input indices
+        # instead of learning the language.
 
         cos, sin = _precompute_rope(cfg.head_dim, cfg.max_seq_len, cfg.rope_theta)
         self.register_buffer("cos_cached", cos, persistent=False)

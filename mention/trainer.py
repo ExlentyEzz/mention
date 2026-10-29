@@ -268,8 +268,6 @@ def run_pretrain(
             return
         unwrapped = accelerator.unwrap_model(model)
         state = {k: v.detach().float().cpu() for k, v in unwrapped.state_dict().items()}
-        # lm_head.weight is tied to wte.weight (shared memory) - save once
-        state.pop("lm_head.weight", None)
         ck_dir = workdir / "checkpoint"
         ck_dir.mkdir(parents=True, exist_ok=True)
         import safetensors.torch as st
